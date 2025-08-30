@@ -160,9 +160,66 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event: MessageEvent):
-    parsed = parse_command(event.message.text)
-    if not parsed:
+    text = event.message.text.strip()
+    src_type = event.source.type
+
+    # ====== 商家（admin）私聊：可發推播指令 ======
+    if src_type == "user" and is_admin(event.source.user_id):
+        # 1) 工具指令：我的ID / 名單 / 綁定 別名 Uxxxx
+        if text in ("我的ID", "my id", "uid"):
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"你的 userId：{event.source.user_id}"))
+            return
+        if text in ("名單", "list"):
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="已存名單（最多30筆）：\n"+list_aliases()))
+            return
+        m = _CMD_BIND.match(text)
+        if m:
+            alias, uid = m.group(1), m.group(2)
+            ok = set_alias(alias, uid)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="綁定成功" if ok else "綁定失敗"))
+            return
+
+        # 2) 推播報價：報價 金額 [VIP*] [用券] @別名
+        m = _CMD_PUSH.match(text)
+        if m:
+            rmb = int(m.group(1))
+            level = m.group(2) or "一般"
+            use_coupon = bool(m.group(3))
+            alias = m.group(4)
+            result = push_quote_to_alias(rmb, level, use_coupon, alias)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=result))
+            return
+
+        # 3) 其他情況 → 當一般客人自助報價（方便你自己先看結果）
+        parsed = parse_command(text)
+        if parsed:
+            rmb, level, use_coupon = parsed
+            twd = quote_twd(rmb, level, use_coupon)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=build_reply(rmb, twd)))
+        else:
+            tip = ("管理指令：\n"
+                   "．報價 2200 VIP3 用券 @小美\n"
+                   "．綁定 小美 Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+                   "．名單／我的ID\n"
+                   "（客戶自助可用：報價 1680、報價 2200 VIP3 用券）")
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=tip))
         return
-    rmb, level, use_coupon = parsed
-    twd = quote_twd(rmb, level, use_coupon)
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=build_reply(rmb, twd)))
+
+    # ====== 一般使用者私聊：自助報價 & 自動記名單 ======
+    if src_type == "user":
+        remember_user_profile(event.source.user_id)
+        parsed = parse_command(text)  # 你原有的：報價 1680 / 報價 2200 VIP3 用券
+        if parsed:
+            rmb, level, use_coupon = parsed
+            twd = quote_twd(rmb, level, use_coupon)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=build_reply(rmb, twd)))
+        else:
+            help_text = ("輸入格式：\n"
+                         "．報價 1680\n．報價 2200 VIP3 用券\n"
+                         "VIP：一般/VIP1/VIP2/VIP3；VIP3 才能用「用券」")
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=help_text))
+        return
+
+    # ====== 其他來源（群/聊天室等）— 不處理或給提示 ======
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="請以私訊使用"))
+
