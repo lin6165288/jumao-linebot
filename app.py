@@ -4,10 +4,30 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from linebot.exceptions import InvalidSignatureError
 
+# --- 讀取 .env（若沒有環境變數就從檔案補） ---
+def _load_dotenv(path="/home/jumao/bot/.env"):
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line=line.strip()
+                    if not line or line.startswith("#") or "=" not in line: 
+                        continue
+                    k,v=line.split("=",1)
+                    os.environ.setdefault(k.strip(), v.strip())
+    except Exception:
+        pass
+_load_dotenv()
+# ---------------------------------------------
+
 app = Flask(__name__)
 
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+# 建議：若沒讀到就丟更清楚的錯
+if not CHANNEL_ACCESS_TOKEN or not CHANNEL_SECRET:
+    raise RuntimeError("LINE credentials missing: set LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET")
+
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 
@@ -46,10 +66,14 @@ def build_reply(rmb: int, twd: int) -> str:
             f"沒問題的話跟我說一聲～\n"
             f"傳給您付款資訊】")
 
+# 同時支援 /health 及 /bot/health（避免 Trim path 影響）
+@app.route("/health")
 @app.route("/bot/health")
 def health():
     return "ok", 200
 
+# 同時支援 /callback 及 /bot/callback
+@app.route("/callback", methods=["POST"])
 @app.route("/bot/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
